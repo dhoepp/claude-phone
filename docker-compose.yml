@@ -6,7 +6,7 @@ version: '3.8'
 
 services:
   drachtio:
-    image: drachtio/drachtio-server:latest
+    image: drachtio/drachtio-server:0.9.5
     container_name: drachtio
     restart: unless-stopped
     network_mode: host
@@ -22,10 +22,16 @@ services:
     # - 9022: Admin/App Port
 
   freeswitch:
-    image: drachtio/drachtio-freeswitch-mrf:latest
+    image: drachtio/drachtio-freeswitch-mrf:0.9.4-4
     container_name: freeswitch
     restart: unless-stopped
     network_mode: host
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/8021'"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+      start_period: 15s
     command: >
       freeswitch
       --sip-port 5080
@@ -57,8 +63,10 @@ services:
       # Device configurations
       - ./voice-app/config:/app/config
     depends_on:
-      - drachtio
-      - freeswitch
+      drachtio:
+        condition: service_started
+      freeswitch:
+        condition: service_healthy
     # Ports (for reference):
     # - 3000: HTTP API
     # - 3001: WebSocket for audio streaming

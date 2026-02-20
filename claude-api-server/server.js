@@ -88,8 +88,8 @@ function buildClaudeEnvironment() {
     PYENV_ROOT: path.join(HOME, '.pyenv'),
     BUN_INSTALL: path.join(HOME, '.bun'),
     // CRITICAL: These tell Claude Code it's running in the proper environment
-    CLAUDECODE: '1',
-    CLAUDE_CODE_ENTRYPOINT: 'cli',
+    // CLAUDECODE: '1',  // Removed - causes nested session error
+    // // CLAUDE_CODE_ENTRYPOINT: 'cli',
   };
 
   // CRITICAL: Remove ANTHROPIC_API_KEY so Claude CLI uses subscription auth

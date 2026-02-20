@@ -17,7 +17,7 @@ const CLAUDE_API_URL = process.env.CLAUDE_API_URL || 'http://localhost:3333';
  * @returns {Promise<string>} Claude's response
  */
 async function query(prompt, options = {}) {
-  const { callId, devicePrompt, timeout = 30 } = options; // AC27: Default 30s timeout
+  const { callId, devicePrompt, timeout = 120 } = options; // AC27: Default 30s timeout
   const timestamp = new Date().toISOString();
 
   try {

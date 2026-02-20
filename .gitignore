@@ -49,3 +49,8 @@ temp/
 !assets/*.png
 !assets/*.jpg
 voice-app/config/devices.json
+
+# Sandbox and failed experiments
+claude-api-server/server-persistent.js
+claude-api-server/sandbox/node_modules/
+*.bak

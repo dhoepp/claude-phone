@@ -125,7 +125,16 @@ srf.on("connect", function(err, hostport) {
     });
 
     // Register all devices from config
-    registrar.registerAll(deviceRegistry.getRegistrationConfigs());
+    // Skip registration if no real SIP credentials (no 3CX)
+    const regConfigs = deviceRegistry.getRegistrationConfigs();
+    const hasRealCreds = Object.values(regConfigs).some(
+      d => d.authId && d.authId !== "" && d.authId !== "none"
+    );
+    if (hasRealCreds) {
+      registrar.registerAll(regConfigs);
+    } else {
+      console.log("[MULTI-REGISTRAR] No SIP credentials - skipping registration (direct SIP mode)");
+    }
   }
 
   checkReadyState();

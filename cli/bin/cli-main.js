@@ -1,22 +1,13 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
-import { setupCommand } from '../lib/commands/setup.js';
-import { startCommand } from '../lib/commands/start.js';
-import { stopCommand } from '../lib/commands/stop.js';
-import { statusCommand } from '../lib/commands/status.js';
-import { doctorCommand } from '../lib/commands/doctor.js';
-import { apiServerCommand } from '../lib/commands/api-server.js';
-import { deviceAddCommand } from '../lib/commands/device/add.js';
-import { deviceListCommand } from '../lib/commands/device/list.js';
-import { deviceRemoveCommand } from '../lib/commands/device/remove.js';
-import { logsCommand } from '../lib/commands/logs.js';
-import { configShowCommand } from '../lib/commands/config/show.js';
-import { configPathCommand } from '../lib/commands/config/path.js';
-import { configResetCommand } from '../lib/commands/config/reset.js';
-import { updateCommand } from '../lib/commands/update.js';
-import { backupCommand } from '../lib/commands/backup.js';
-import { restoreCommand } from '../lib/commands/restore.js';
-import { uninstallCommand } from '../lib/commands/uninstall.js';
+
+// Lazy-load command modules to reduce RAM usage at startup
+// Each command is only imported when actually executed
+const lazyImport = async (modulePath) => {
+  const module = await import(modulePath);
+  // Most modules export a single default or named function
+  return module.default || module[Object.keys(module)[0]];
+};
 
 const program = new Command();
 
@@ -31,6 +22,7 @@ program
   .option('--skip-prereqs', 'Skip prerequisite checks (advanced users only)')
   .action(async (options) => {
     try {
+      const { setupCommand } = await import('../lib/commands/setup.js');
       await setupCommand(options);
     } catch (error) {
       console.error(chalk.red(`\n✗ Setup failed: ${error.message}\n`));
@@ -43,6 +35,7 @@ program
   .description('Start all services (Docker containers + claude-api-server)')
   .action(async () => {
     try {
+      const { startCommand } = await import('../lib/commands/start.js');
       await startCommand();
     } catch (error) {
       console.error(chalk.red(`\n✗ Start failed: ${error.message}\n`));
@@ -55,6 +48,7 @@ program
   .description('Stop all services')
   .action(async () => {
     try {
+      const { stopCommand } = await import('../lib/commands/stop.js');
       await stopCommand();
     } catch (error) {
       console.error(chalk.red(`\n✗ Stop failed: ${error.message}\n`));
@@ -67,6 +61,7 @@ program
   .description('Show status of all services')
   .action(async () => {
     try {
+      const { statusCommand } = await import('../lib/commands/status.js');
       await statusCommand();
     } catch (error) {
       console.error(chalk.red(`\n✗ Status check failed: ${error.message}\n`));
@@ -79,6 +74,7 @@ program
   .description('Run health checks on all dependencies and services')
   .action(async () => {
     try {
+      const { doctorCommand } = await import('../lib/commands/doctor.js');
       await doctorCommand();
     } catch (error) {
       console.error(chalk.red(`\n✗ Health check failed: ${error.message}\n`));
@@ -97,6 +93,7 @@ program
         console.error(chalk.red('\n✗ Port must be between 1024 and 65535\n'));
         process.exit(1);
       }
+      const { apiServerCommand } = await import('../lib/commands/api-server.js');
       await apiServerCommand({ port });
     } catch (error) {
       console.error(chalk.red(`\n✗ API server failed: ${error.message}\n`));
@@ -114,6 +111,7 @@ device
   .description('Add a new device')
   .action(async () => {
     try {
+      const { deviceAddCommand } = await import('../lib/commands/device/add.js');
       await deviceAddCommand();
     } catch (error) {
       console.error(chalk.red(`\n✗ Device add failed: ${error.message}\n`));
@@ -126,6 +124,7 @@ device
   .description('List all configured devices')
   .action(async () => {
     try {
+      const { deviceListCommand } = await import('../lib/commands/device/list.js');
       await deviceListCommand();
     } catch (error) {
       console.error(chalk.red(`\n✗ Device list failed: ${error.message}\n`));
@@ -138,6 +137,7 @@ device
   .description('Remove a device by name')
   .action(async (name) => {
     try {
+      const { deviceRemoveCommand } = await import('../lib/commands/device/remove.js');
       await deviceRemoveCommand(name);
     } catch (error) {
       console.error(chalk.red(`\n✗ Device remove failed: ${error.message}\n`));
@@ -150,6 +150,7 @@ program
   .description('Tail service logs (voice-app, api-server, or all)')
   .action(async (service) => {
     try {
+      const { logsCommand } = await import('../lib/commands/logs.js');
       await logsCommand(service);
     } catch (error) {
       console.error(chalk.red(`\n✗ Logs command failed: ${error.message}\n`));
@@ -167,6 +168,7 @@ config
   .description('Display configuration with redacted secrets')
   .action(async () => {
     try {
+      const { configShowCommand } = await import('../lib/commands/config/show.js');
       await configShowCommand();
     } catch (error) {
       console.error(chalk.red(`\n✗ Config show failed: ${error.message}\n`));
@@ -179,6 +181,7 @@ config
   .description('Show configuration file location')
   .action(async () => {
     try {
+      const { configPathCommand } = await import('../lib/commands/config/path.js');
       await configPathCommand();
     } catch (error) {
       console.error(chalk.red(`\n✗ Config path failed: ${error.message}\n`));
@@ -191,6 +194,7 @@ config
   .description('Reset configuration (creates backup)')
   .action(async () => {
     try {
+      const { configResetCommand } = await import('../lib/commands/config/reset.js');
       await configResetCommand();
     } catch (error) {
       console.error(chalk.red(`\n✗ Config reset failed: ${error.message}\n`));
@@ -203,6 +207,7 @@ program
   .description('Update Claude Phone to latest version')
   .action(async () => {
     try {
+      const { updateCommand } = await import('../lib/commands/update.js');
       await updateCommand();
     } catch (error) {
       console.error(chalk.red(`\n✗ Update failed: ${error.message}\n`));
@@ -215,6 +220,7 @@ program
   .description('Create timestamped backup of configuration')
   .action(async () => {
     try {
+      const { backupCommand } = await import('../lib/commands/backup.js');
       await backupCommand();
     } catch (error) {
       console.error(chalk.red(`\n✗ Backup failed: ${error.message}\n`));
@@ -227,6 +233,7 @@ program
   .description('Restore configuration from backup')
   .action(async () => {
     try {
+      const { restoreCommand } = await import('../lib/commands/restore.js');
       await restoreCommand();
     } catch (error) {
       console.error(chalk.red(`\n✗ Restore failed: ${error.message}\n`));
@@ -239,6 +246,7 @@ program
   .description('Uninstall Claude Phone completely')
   .action(async () => {
     try {
+      const { uninstallCommand } = await import('../lib/commands/uninstall.js');
       await uninstallCommand();
     } catch (error) {
       console.error(chalk.red(`\n✗ Uninstall failed: ${error.message}\n`));

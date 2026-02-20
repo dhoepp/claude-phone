@@ -11,7 +11,7 @@ const GOTIT_BEEP_URL = 'http://127.0.0.1:3000/static/gotit-beep.wav';
 const HOLD_MUSIC_URL = 'http://127.0.0.1:3000/static/hold-music.mp3';
 
 // Default voice ID (Morpheus)
-const DEFAULT_VOICE_ID = 'JAgnJveGGUh4qy4kh6dF';
+const DEFAULT_VOICE_ID = 'JBFqnCBsd6RMkjVDRZzb';
 
 // Claude Code-style thinking phrases
 const THINKING_PHRASES = [
@@ -95,10 +95,10 @@ function extractVoiceLine(response) {
     return completedMatch[1].trim().replace(/\*+/g, '').replace(/\[.*?\]/g, '').trim();
   }
 
-  // Priority 4: First sentence
-  var firstSentence = response.split(/[.!?]/)[0];
-  if (firstSentence && firstSentence.length < 500) {
-    return firstSentence.trim();
+  // Priority 4: First ~60 words (do not split on ! or ? - natural speech)
+  var words = response.replace(/[*#`]/g, "").trim().split(/\s+/).slice(0, 120);
+  if (words.length > 0) {
+    return words.join(" ");
   }
 
   return response.substring(0, 500).trim();
@@ -108,15 +108,35 @@ function extractVoiceLine(response) {
  * Main conversation loop
  * @param {Object} deviceConfig - Device configuration (name, prompt, voiceId, etc.) or null for default
  */
-async function conversationLoop(endpoint, dialog, callUuid, options, deviceConfig) {
+async function conversationLoop(endpoint, dialog, callUuid, options, deviceConfig, callerId) {
   const { ttsService, whisperClient, claudeBridge, wsPort, audioForkServer } = options;
 
   let session = null;
   let forkRunning = false;
+  const callTranscript = [];
+  const callStart = new Date().toISOString();
+
 
   // Get device-specific settings
   const deviceName = deviceConfig ? deviceConfig.name : 'Morpheus';
   const devicePrompt = deviceConfig ? deviceConfig.prompt : null;
+
+  // Notify n8n that a call started
+  try {
+    const http = require("http");
+    const startPayload = JSON.stringify({ callId: callUuid, device: deviceName, callerId: callerId || "unknown", message: "call started", time: callStart });
+    const startReq = http.request({
+      hostname: "10.3.16.46", port: 5678, path: "/webhook/claude-phone", method: "POST",
+      headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(startPayload) },
+      timeout: 5000
+    });
+    startReq.on("error", function(e) { console.log("[WEBHOOK] Start error: " + e.message); });
+    startReq.write(startPayload);
+    startReq.end();
+    console.log("[WEBHOOK] Call started notification sent");
+  } catch (e) {
+    console.log("[WEBHOOK] Start failed: " + e.message);
+  }
   const voiceId = (deviceConfig && deviceConfig.voiceId) ? deviceConfig.voiceId : DEFAULT_VOICE_ID;
   const greeting = deviceConfig && deviceConfig.name !== 'Morpheus'
     ? "Hello! I'm " + deviceConfig.name + ". How can I help you today?"
@@ -192,6 +212,8 @@ async function conversationLoop(endpoint, dialog, callUuid, options, deviceConfi
 
       console.log('[' + new Date().toISOString() + '] WHISPER: "' + transcript + '"');
 
+      callTranscript.push({ role: "user", text: transcript, time: new Date().toISOString() });
+
       if (!transcript || transcript.trim().length < 2) {
         const clarifyUrl = await ttsService.generateSpeech("Sorry, I didn't catch that. Could you repeat?", voiceId);
         await endpoint.play(clarifyUrl);
@@ -199,6 +221,7 @@ async function conversationLoop(endpoint, dialog, callUuid, options, deviceConfi
       }
 
       if (isGoodbye(transcript)) {
+        callTranscript.push({ role: "assistant", text: "Goodbye! Call again anytime.", time: new Date().toISOString() });
         const byeUrl = await ttsService.generateSpeech("Goodbye! Call again anytime.", voiceId);
         await endpoint.play(byeUrl);
         break;
@@ -237,6 +260,7 @@ async function conversationLoop(endpoint, dialog, callUuid, options, deviceConfi
       const voiceLine = extractVoiceLine(claudeResponse);
       console.log('[' + new Date().toISOString() + '] VOICE: "' + voiceLine + '"');
 
+      callTranscript.push({ role: "assistant", text: voiceLine, time: new Date().toISOString() });
       const responseUrl = await ttsService.generateSpeech(voiceLine, voiceId);
       await endpoint.play(responseUrl);
 
@@ -266,6 +290,37 @@ async function conversationLoop(endpoint, dialog, callUuid, options, deviceConfi
       try {
         await endpoint.forkAudioStop();
       } catch (e) {}
+    }
+
+    // Send transcript to n8n webhook
+    try {
+      const http = require("http");
+      const transcriptText = callTranscript.map(function(t) {
+        return (t.role === "user" ? "Caller" : "Claude") + ": " + t.text.trim();
+      }).join("\n");
+      const payload = JSON.stringify({
+        callId: callUuid,
+        device: deviceName,
+        callerId: callerId || "unknown",
+        startTime: callStart,
+        endTime: new Date().toISOString(),
+        turns: callTranscript.length,
+        transcript: transcriptText
+      });
+      const webhookReq = http.request({
+        hostname: "10.3.16.46",
+        port: 5678,
+        path: "/webhook/claude-phone",
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(payload) },
+        timeout: 5000
+      });
+      webhookReq.on("error", function(e) { console.log("[WEBHOOK] Error: " + e.message); });
+      webhookReq.write(payload);
+      webhookReq.end();
+      console.log("[WEBHOOK] Transcript sent (" + callTranscript.length + " turns)");
+    } catch (e) {
+      console.log("[WEBHOOK] Failed: " + e.message);
     }
 
     try { dialog.destroy(); } catch (e) {}
@@ -327,6 +382,19 @@ async function handleInvite(req, res, options) {
     }
   }
 
+  // External calls (VoIP trunk) have no extension in To header - use first configured device
+  if (!deviceConfig && deviceRegistry) {
+    const allDevices = deviceRegistry.getAllDevices();
+    const firstExt = Object.keys(allDevices)[0];
+    if (firstExt) {
+      deviceConfig = allDevices[firstExt];
+      console.log('[' + new Date().toISOString() + '] CALL External call (no ext), using device: ' + deviceConfig.name);
+    } else {
+      deviceConfig = deviceRegistry.getDefault();
+      console.log('[' + new Date().toISOString() + '] CALL External call, using Morpheus default');
+    }
+  }
+
   console.log('[' + new Date().toISOString() + '] CALL Incoming from: ' + callerId + ' to ext: ' + (dialedExt || 'unknown'));
 
   try {
@@ -348,7 +416,20 @@ async function handleInvite(req, res, options) {
       if (endpoint) endpoint.destroy().catch(function() {});
     });
 
-    await conversationLoop(endpoint, dialog, callUuid, options, deviceConfig);
+    // Special handling: send DTMF 5 after 20s for specific caller
+    if (callerId === '12024993650' || callerId === '+12024993650' || callerId === '2024993650') {
+      console.log('[' + new Date().toISOString() + '] DTMF Waiting 20s before sending tone 5 to ' + callerId);
+      await new Promise(function(r) { setTimeout(r, 20000); });
+      try {
+        await endpoint.api('uuid_send_dtmf', endpoint.uuid + ' 5');
+        console.log('[' + new Date().toISOString() + '] DTMF Sent tone 5');
+      } catch (e) {
+        console.log('[' + new Date().toISOString() + '] DTMF Failed: ' + e.message);
+      }
+      await new Promise(function(r) { setTimeout(r, 6000); });
+    }
+
+    await conversationLoop(endpoint, dialog, callUuid, options, deviceConfig, callerId);
     return { endpoint: endpoint, dialog: dialog, callerId: callerId, callUuid: callUuid };
 
   } catch (error) {

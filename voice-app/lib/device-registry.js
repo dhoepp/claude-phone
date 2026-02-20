@@ -25,7 +25,7 @@ const MORPHEUS_DEFAULT = {
   extension: '9000',
   authId: 'Au0XZPTpJY',
   password: 'DGHwMW6v25',
-  voiceId: 'JAgnJveGGUh4qy4kh6dF',
+  voiceId: 'JBFqnCBsd6RMkjVDRZzb',
   prompt: 'You are Morpheus, Chuck\'s principal AI assistant. You are meticulous, systematic, and excellence-driven. Keep voice responses under 40 words.'
 };
 
