@@ -59,11 +59,35 @@ function extractDialedExtension(req) {
 
 function isGoodbye(transcript) {
   const lower = transcript.toLowerCase().trim();
-  const goodbyePhrases = ['goodbye', 'good bye', 'bye', 'hang up', 'end call', "that's all", 'thats all'];
-  return goodbyePhrases.some(function(phrase) {
-    return lower === phrase || lower.includes(' ' + phrase) ||
-           lower.startsWith(phrase + ' ') || lower.endsWith(' ' + phrase);
-  });
+
+  // Explicit farewells
+  const exactPhrases = [
+    'goodbye', 'good bye', 'bye', 'bye bye', 'hang up', 'end call',
+    "that's all", 'thats all', 'no thanks', 'no thank you',
+    'nothing else', 'nothing else thank you', 'nothing else thanks',
+    "i'm done", 'im done', "i'm good", 'im good', "i'm all set", 'im all set',
+    'have a good one', 'have a nice day', 'have a good day',
+    'talk later', 'talk to you later', 'ttyl', 'take care',
+    'see ya', 'see you', 'later', 'peace',
+    'just a test', 'this was a test', 'just testing', 'only a test'
+  ];
+
+  // Check exact match or phrase appears in transcript
+  if (exactPhrases.some(function(phrase) {
+    return lower === phrase || lower.includes(phrase);
+  })) return true;
+
+  // Patterns that imply ending
+  const endPatterns = [
+    /^(that('?s| is) (all|it|everything))/,
+    /^(no(thing)? (else|more|further))/,
+    /(thanks?|thank you).{0,20}$/,   // ends with thanks
+    /^(i('m| am) (done|finished|good|all set|okay now|set))/,
+    /(good (night|evening|morning|afternoon))\s*$/,
+    /^(just (testing|checking|a test))/,
+  ];
+
+  return endPatterns.some(function(pattern) { return pattern.test(lower); });
 }
 
 /**
@@ -115,6 +139,15 @@ async function conversationLoop(endpoint, dialog, callUuid, options, deviceConfi
   let forkRunning = false;
   const callTranscript = [];
   const callStart = new Date().toISOString();
+  let callEnded = false;
+  let resolveCallEnded;
+  const callEndedPromise = new Promise(function(resolve) { resolveCallEnded = resolve; });
+
+  // Detect hang-up and signal the conversation loop
+  dialog.on('destroy', function() {
+    callEnded = true;
+    if (resolveCallEnded) resolveCallEnded();
+  });
 
 
   // Get device-specific settings
@@ -166,8 +199,14 @@ async function conversationLoop(endpoint, dialog, callUuid, options, deviceConfi
     // Main conversation loop
     let turnCount = 0;
     const MAX_TURNS = 20;
+    let silenceCount = 0;
+    const MAX_SILENCE = 2;
 
     while (turnCount < MAX_TURNS) {
+      if (callEnded) {
+        console.log('[' + new Date().toISOString() + '] CONVERSATION Caller hung up, ending loop');
+        break;
+      }
       turnCount++;
       console.log('[' + new Date().toISOString() + '] CONVERSATION Turn ' + turnCount + '/' + MAX_TURNS);
 
@@ -192,10 +231,18 @@ async function conversationLoop(endpoint, dialog, callUuid, options, deviceConfi
       session.setCaptureEnabled(false);
 
       if (!utterance) {
+        silenceCount++;
+        if (silenceCount >= MAX_SILENCE) {
+          console.log('[' + new Date().toISOString() + '] SILENCE Ending call after ' + MAX_SILENCE + ' consecutive timeouts');
+          const byeUrl = await ttsService.generateSpeech("I'll let you go. Call again anytime. Goodbye!", voiceId);
+          await endpoint.play(byeUrl);
+          break;
+        }
         const promptUrl = await ttsService.generateSpeech("I didn't hear anything. Are you still there?", voiceId);
         await endpoint.play(promptUrl);
         continue;
       }
+      silenceCount = 0; // Reset on successful utterance
 
       // GOT-IT BEEP
       try {
@@ -242,10 +289,10 @@ async function conversationLoop(endpoint, dialog, callUuid, options, deviceConfi
 
       // Query Claude with device-specific prompt
       console.log('[' + new Date().toISOString() + '] CLAUDE Querying (device: ' + deviceName + ')...');
-      const claudeResponse = await claudeBridge.query(
-        transcript,
-        { callId: callUuid, devicePrompt: devicePrompt }
-      );
+      const claudeResponse = await Promise.race([
+        claudeBridge.query(transcript, { callId: callUuid, devicePrompt: devicePrompt }),
+        callEndedPromise.then(function() { throw new Error('Call ended by remote'); })
+      ]);
 
       // Stop hold music
       if (musicPlaying) {
