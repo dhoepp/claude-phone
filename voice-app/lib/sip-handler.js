@@ -175,12 +175,21 @@ async function conversationLoop(endpoint, dialog, callUuid, options, deviceConfi
     ? "Hello! I'm " + deviceConfig.name + ". How can I help you today?"
     : "Hello! I'm your server. How can I help you today?";
 
+  // Helper: play audio but abort if caller hangs up
+  async function safePlay(url) {
+    if (callEnded) return;
+    await Promise.race([
+      endpoint.play(url),
+      callEndedPromise.then(function() { throw new Error('Call ended by remote'); })
+    ]);
+  }
+
   try {
     console.log('[' + new Date().toISOString() + '] CONVERSATION Starting (session: ' + callUuid + ', device: ' + deviceName + ', voice: ' + voiceId + ')...');
 
     // Play device-specific greeting with device voice
     const greetingUrl = await ttsService.generateSpeech(greeting, voiceId);
-    await endpoint.play(greetingUrl);
+    await safePlay(greetingUrl);
 
     // Start fork for entire call
     const wsUrl = 'ws://127.0.0.1:' + wsPort + '/' + encodeURIComponent(callUuid);
@@ -212,7 +221,7 @@ async function conversationLoop(endpoint, dialog, callUuid, options, deviceConfi
 
       // READY BEEP
       try {
-        await endpoint.play(READY_BEEP_URL);
+        await safePlay(READY_BEEP_URL);
       } catch (e) {
         console.log('[' + new Date().toISOString() + '] BEEP: Ready beep failed, continuing');
       }
@@ -239,14 +248,14 @@ async function conversationLoop(endpoint, dialog, callUuid, options, deviceConfi
           break;
         }
         const promptUrl = await ttsService.generateSpeech("I didn't hear anything. Are you still there?", voiceId);
-        await endpoint.play(promptUrl);
+        await safePlay(promptUrl);
         continue;
       }
       silenceCount = 0; // Reset on successful utterance
 
       // GOT-IT BEEP
       try {
-        await endpoint.play(GOTIT_BEEP_URL);
+        await safePlay(GOTIT_BEEP_URL);
       } catch (e) {
         console.log('[' + new Date().toISOString() + '] BEEP: Got-it beep failed, continuing');
       }
@@ -263,14 +272,14 @@ async function conversationLoop(endpoint, dialog, callUuid, options, deviceConfi
 
       if (!transcript || transcript.trim().length < 2) {
         const clarifyUrl = await ttsService.generateSpeech("Sorry, I didn't catch that. Could you repeat?", voiceId);
-        await endpoint.play(clarifyUrl);
+        await safePlay(clarifyUrl);
         continue;
       }
 
       if (isGoodbye(transcript)) {
         callTranscript.push({ role: "assistant", text: "Goodbye! Call again anytime.", time: new Date().toISOString() });
         const byeUrl = await ttsService.generateSpeech("Goodbye! Call again anytime.", voiceId);
-        await endpoint.play(byeUrl);
+        await safePlay(byeUrl);
         break;
       }
 
@@ -278,7 +287,7 @@ async function conversationLoop(endpoint, dialog, callUuid, options, deviceConfi
       const thinkingPhrase = getRandomThinkingPhrase();
       console.log('[' + new Date().toISOString() + '] THINKING: "' + thinkingPhrase + '"');
       const thinkingUrl = await ttsService.generateSpeech(thinkingPhrase, voiceId);
-      await endpoint.play(thinkingUrl);
+      await safePlay(thinkingUrl);
 
       // Hold music in background
       let musicPlaying = false;
@@ -305,18 +314,25 @@ async function conversationLoop(endpoint, dialog, callUuid, options, deviceConfi
 
       // Extract and play voice line with device voice
       const voiceLine = extractVoiceLine(claudeResponse);
-      console.log('[' + new Date().toISOString() + '] VOICE: "' + voiceLine + '"');
+      const wantsToEnd = /🔚\s*END_CALL/i.test(claudeResponse);
+      console.log('[' + new Date().toISOString() + '] VOICE: "' + voiceLine + '"' + (wantsToEnd ? ' [END_CALL]' : ''));
 
       callTranscript.push({ role: "assistant", text: voiceLine, time: new Date().toISOString() });
       const responseUrl = await ttsService.generateSpeech(voiceLine, voiceId);
-      await endpoint.play(responseUrl);
+      await safePlay(responseUrl);
+
+      if (wantsToEnd) {
+        console.log('[' + new Date().toISOString() + '] CONVERSATION Claude signaled END_CALL, hanging up');
+        try { dialog.destroy(); } catch(e) {}
+        break;
+      }
 
       console.log('[' + new Date().toISOString() + '] CONVERSATION Turn ' + turnCount + ' complete');
     }
 
     if (turnCount >= MAX_TURNS) {
       const maxUrl = await ttsService.generateSpeech("We've been talking for a while. Goodbye!", voiceId);
-      await endpoint.play(maxUrl);
+      await safePlay(maxUrl);
     }
 
   } catch (error) {
@@ -324,22 +340,12 @@ async function conversationLoop(endpoint, dialog, callUuid, options, deviceConfi
     try {
       if (session) session.setCaptureEnabled(false);
       const errUrl = await ttsService.generateSpeech("Sorry, something went wrong.", voiceId);
-      await endpoint.play(errUrl);
+      await safePlay(errUrl);
     } catch (e) {}
   } finally {
     console.log('[' + new Date().toISOString() + '] CONVERSATION Cleanup...');
 
-    try {
-      await claudeBridge.endSession(callUuid);
-    } catch (e) {}
-
-    if (forkRunning) {
-      try {
-        await endpoint.forkAudioStop();
-      } catch (e) {}
-    }
-
-    // Send transcript to n8n webhook
+    // Send transcript FIRST so it appears in feed immediately
     try {
       const http = require("http");
       const transcriptText = callTranscript.map(function(t) {
@@ -368,6 +374,16 @@ async function conversationLoop(endpoint, dialog, callUuid, options, deviceConfi
       console.log("[WEBHOOK] Transcript sent (" + callTranscript.length + " turns)");
     } catch (e) {
       console.log("[WEBHOOK] Failed: " + e.message);
+    }
+
+    try {
+      await claudeBridge.endSession(callUuid);
+    } catch (e) {}
+
+    if (forkRunning) {
+      try {
+        await endpoint.forkAudioStop();
+      } catch (e) {}
     }
 
     try { dialog.destroy(); } catch (e) {}

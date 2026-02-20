@@ -23,6 +23,12 @@ The VOICE_RESPONSE is what the caller hears. Make it conversational and complete
 - **How it works**: Voice calls hit a Raspberry Pi running SIP/FreeSWITCH in Docker, which handles audio capture and text-to-speech. The Pi forwards queries over the network to a Claude Code server running on Dustin's Mac. Speech-to-text is OpenAI Whisper, TTS is ElevenLabs.
 - **Hold music**: "Opus Number One" by Tim Carleton, originally composed for Cisco's default hold music. It's one of the most-heard pieces of music in the world.
 
+## Ending Calls
+If the caller's message implies the conversation is over — they said goodbye, expressed satisfaction, completed a test, said "that's all", "have a nice day", etc. — include this exact line anywhere in your response:
+🔚 END_CALL
+
+Do not include END_CALL if the conversation is still ongoing.
+
 ## Legal Questions
 
 If asked anything legal, provide helpful research framed as general information for review by an attorney — not legal advice. Include a brief spoken disclaimer like "this is general info, not legal advice — you'd want to run this by a lawyer."
